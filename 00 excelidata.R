@@ -53,15 +53,17 @@ nestp1 <- hlt_seutu %>%
 
 ggsave("nest_kuva.png", h = 11, w = 7)
 
-jarj_d <- data_nest %>% 
-   unnest() %>% 
-   mutate(name = str_replace(name, "_tulokset", ""),
-          name = str_replace(name, "_", " "),
-          name = str_replace(name, "ät Hä", "ät-Hä")) %>% 
-   mutate(vyohyke = as_factor(vyohyke)) %>% 
-   gather(kt, osuus, kk:muu) %>% 
-   mutate(kt = as_factor(kt)) %>% 
-   mutate(osuus = osuus / kaikki) %>% 
+# seutu, pelkkä pyöräily ----
+
+jarj_d <- hlt_seutu %>% 
+   # unnest() %>% 
+   # mutate(name = str_replace(name, "_tulokset", ""),
+   #        name = str_replace(name, "_", " "),
+   #        name = str_replace(name, "ät Hä", "ät-Hä")) %>% 
+   # mutate(vyohyke = as_factor(vyohyke)) %>% 
+   # gather(kt, osuus, kk:muu) %>% 
+   # mutate(kt = as_factor(kt)) %>% 
+   # mutate(osuus = osuus / kaikki) %>% 
    filter(!str_detect(vyohyke, "oko")) %>%
    filter(kt == "pp") %>% 
    # complete(name, vyohyke, fill = list(osuus = 0)) %>%
@@ -69,24 +71,29 @@ jarj_d <- data_nest %>%
    filter(!is.na(x_lab)) %>% 
    arrange(vyohyke, x_lab) %>% 
    mutate(x_lab = as.character(x_lab)) %>% 
-   filter(!str_detect(vyohyke, "oko"))
-
-pp_vari <- RColorBrewer::brewer.pal(5, "Set2")[4]
+   filter(!str_detect(vyohyke, "oko")) %>% 
+   group_by(name) %>% 
+   mutate(label_pos = case_when(osuus < 0.15 * max(osuus) ~ osuus + 0.05 * max(osuus), TRUE ~ osuus - 0.05 * max(osuus))) %>% 
+   mutate(label_hjust = case_when(osuus < 0.15 * max(osuus) ~ 0, TRUE ~ 1)) %>% 
+   ungroup() %>% 
+   mutate(col = case_when(str_detect(name, "Oulu") ~ "#66C2A5", TRUE ~ "#E78AC3"))
 
 jarj_d %>% 
    ggplot(aes(x_lab, osuus, fill = "heh")) +
-   facet_wrap(~ vyohyke, ncol = 2, scales = "free_y") +
+   facet_wrap(~ vyohyke, ncol = 3, scales = "free") +
    scale_x_discrete(labels = jarj_d$name, breaks = jarj_d$x_lab) +
-   geom_col(show.legend = FALSE) +
+   geom_col(show.legend = FALSE, fill = jarj_d$col) +
    coord_flip() +
    scale_fill_manual(values = pp_vari) +
    scale_y_continuous(labels = function(x) paste(x * 100, "%"), expand = expand_scale(c(0.05, 0.1))) +
-   geom_text(aes(y = osuus + 0.02, label = format(round(osuus * 100, 1), decimal.mark = ",")), size = 2.5) +
+   # geom_text(aes(y = osuus + 0.02, label = format(round(osuus * 100, 1), decimal.mark = ",")), size = 2.5) +
+   geom_text(aes(y = label_pos, label = format(round(osuus * 100, 1), decimal.mark = ","), hjust = label_hjust), size = 2.5, 
+             vjust = 0.5, color = "black") +
    theme_minimal() +
    theme(panel.background = element_rect(color = "gray90", fill = "white"),
          panel.grid.major.y = element_blank(),
          text = element_text(size = 10)) +
-   labs(x = NULL, y = NULL) 
+   labs(x = NULL, y = NULL, title = "Pyöräilyn kulkutapaosuus kaupunki–maaseutu-alueen mukaan") 
 
-ggsave("pyorailyn_osuus.png", h = 6, w = 7)
+ggsave("km-alue_pp_only.png", h = 6, w = 10)
 

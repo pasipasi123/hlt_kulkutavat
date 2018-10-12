@@ -18,12 +18,13 @@ data_tar <- readxl::read_excel("C:/Users/pasih/Documents/analyysit/kulkutavatvyo
    set_names(nimet) %>% 
    transmute(tarkoitus, kk, pp, jk, ha = ha1 + ha2, muu, kaikki) %>% 
    mutate(tarkoitus = isoksi(tarkoitus)) %>% 
-   gather(kt, osuus, kk:muu) %>% 
-   mutate(osuus = osuus / kaikki) %>% 
+   gather(kt, matkat, kk:muu) %>% 
+   mutate(osuus = matkat / kaikki) %>% 
    group_by(tarkoitus) %>% 
    mutate(jarj = osuus[kt == "pp"]) %>% 
    ungroup() %>% 
-   mutate(kt = as_factor(kt) %>% factor(labels = rev(kt_lab)))
+   mutate(kt = as_factor(kt) %>% factor(labels = kt_lab))
+
 
 data_tar %>% 
    ggplot(aes(tarkoitus %>% fct_reorder(jarj), osuus, fill = kt %>% fct_relevel("Pyöräily", after = 0) %>% fct_rev())) +
@@ -40,24 +41,16 @@ data_tar %>%
 
 ggsave("matkan_tarkoitus_oulu.png", h = 4, w = 7)
 
-readxl::read_excel("C:/Users/pasih/Documents/analyysit/kulkutavatvyoh/data/Oulun_seutu_tulokset.xlsx",
-                   sheet = "D183", skip = 12, n_max = 9, col_names = FALSE) %>% 
-   as_tibble() %>% 
-   select(1:8) %>% 
-   set_names(nimet) %>% 
-   transmute(tarkoitus, kk, pp, jk, ha = ha1 + ha2, muu, kaikki) %>% 
-   mutate(tarkoitus = isoksi(tarkoitus)) %>% 
-   gather(kt, osuus, kk:muu) %>% 
-   mutate(kt = as_factor(kt) %>% factor(labels = rev(kt_lab))) %>% 
-   filter(!str_detect(tarkoitus, "Kaikki")) %>% 
+data_tar %>% 
+   filter(!str_detect(tarkoitus, "Kaikki")) %>%
    group_by(kt) %>% 
-   mutate(osuus = osuus/sum(osuus)) %>% 
-   ggplot(aes(kt %>% fct_rev(), osuus, fill = tarkoitus)) +
+   mutate(osuus_tar = matkat/sum(matkat)) %>% 
+   ggplot(aes(kt %>% fct_rev(), osuus_tar, fill = tarkoitus)) +
    geom_col(position = "stack") +
    coord_flip() +
    scale_y_continuous(labels = function(x) paste(x * 100, "%")) +
    scale_fill_brewer(palette = "Set3", name = "Matkan\ntarkoitus") +
-   ggrepel::geom_text_repel(aes(label = format(round(osuus * 100, 1), decimal.mark = ",")),
+   ggrepel::geom_text_repel(aes(label = format(round(osuus_tar * 100, 1), decimal.mark = ",")),
                             position = position_stack(vjust = 0.5), size = 3,
                             direction = "x", box.padding = 0, point.padding = 0) +
    labs(x = NULL, y = NULL) +
@@ -85,7 +78,8 @@ seutu_tar <- map(data_files, as_tibble) %>%
           name = str_replace(name, "_", " "),
           name = str_replace(name, "ät Hä", "ät-Hä")) %>% 
    mutate_at(vars(name, tarkoitus), as_factor) %>% 
-   mutate(tarkoitus = fct_relevel(tarkoitus, "Työ", "Työasia", "Koulu, opiskelu", "Ostos", "Asiointi, muu henkilökohtainen", "Saattaminen, kyyditseminen", "Vapaa-aika")) %>% 
+   mutate(tarkoitus = fct_relevel(tarkoitus, "Työ", "Työasia", "Koulu, opiskelu", "Ostos", 
+                                  "Asiointi, muu henkilökohtainen", "Saattaminen, kyyditseminen", "Vapaa-aika")) %>% 
    gather(kt, osuus, kk:muu) %>% 
    mutate(kt = as_factor(kt)) %>% 
    filter(!str_detect(tarkoitus, "Kaikki")) %>% 
@@ -136,8 +130,43 @@ seutu_tar %>%
    guides(fill = guide_legend(reverse = TRUE)) +
    theme_minimal() +
    theme(legend.position = "top") +
-   labs(x = NULL, y = NULL) 
+   labs(x = NULL, y = NULL)
 
 ggsave("seutu_matkan_tarkoitus_2.png", h = 7, w = 10)
 
-seutu_tar %>% filter(tarkoitus == "Koulu, opiskelu")
+# koko seutu pelkkä pyöräily järjestyksessä ----
+
+# värien vilkaisu
+# RColorBrewer::brewer.pal(7, "Set3")
+
+tar_jarj <- seutu_tar %>% 
+   filter(kt == "pp") %>% 
+   select(name, tarkoitus, p_tar) %>% 
+   mutate(jarj = p_tar) %>% 
+   arrange(jarj) %>% 
+   mutate(jarj = as.character(jarj)) %>%
+   group_by(tarkoitus) %>% 
+   mutate(label_pos = case_when(p_tar < 0.15 * max(p_tar) ~ p_tar + 0.05 * max(p_tar), TRUE ~ p_tar - 0.05 * max(p_tar))) %>% 
+   mutate(label_hjust = case_when(p_tar < 0.15 * max(p_tar) ~ 0, TRUE ~ 1)) %>% 
+   ungroup() %>% 
+   mutate(col = case_when(str_detect(name, "Oulu") ~ "#B3DE69", TRUE ~ "#FDB462")) %>% 
+   arrange(tarkoitus, jarj)
+
+tar_jarj %>% 
+   # mutate(tarkoitus = as.character(tarkoitus) %>% isoksi() %>% as_factor()) %>% 
+   ggplot(aes(jarj, p_tar)) +
+   geom_col(show.legend = FALSE, fill = tar_jarj$col) +
+   facet_wrap(~ tarkoitus, scales = "free") +
+   scale_x_discrete(labels = tar_jarj$name, breaks = tar_jarj$jarj) +
+   scale_y_continuous(expand = expand_scale(c(0.01, 0.08))) +
+   coord_flip() +
+   # scale_fill_brewer(palette = "Set3") +
+   # geom_text(aes(y = p_tar * 0.85, label = format(round(p_tar * 100, 1), decimal.mark = ",")), size = 2.5, 
+   geom_text(aes(y = label_pos, label = format(round(p_tar * 100, 1), decimal.mark = ","), hjust = label_hjust), size = 2.5, 
+             vjust = 0.5, color = "black") +
+   theme_minimal() +
+   scale_y_continuous(labels = function(x) paste(x * 100, "%")) +
+   labs(x = NULL, y = NULL, title = "Pyöräilyn kulkutapaosuus matkan tarkoituksen mukaan") +
+   theme(text = element_text(size = 10))
+
+ggsave("matkan_tarkoitus_pp_only.png", h = 6, w = 10)
