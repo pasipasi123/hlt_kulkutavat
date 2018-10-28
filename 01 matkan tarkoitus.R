@@ -61,6 +61,98 @@ ggsave("matkan_tarkoitus_2_oulu.png", h = 4, w = 8)
 
 # koko seutu ----
 
+library(tidyverse)
+library(rvest)
+
+# tekstinkäsittelyfunktiot
+tekstit <- function(x) {
+   x <- gsub("_tulokset", "", x)
+   x <- gsub("_", " ", x)
+   x <- gsub("ät Hä", "ät-Hä", x) # Päijät-Häme special
+}
+isoksi <- function(x) {
+   y <- str_sub(x, 1, 1)
+   paste0(toupper(y), str_sub(x, 2, nchar(x)))
+}
+
+# sama linkki kuin ylempänä tekstissä
+tulossivu <- read_html("https://www.liikennevirasto.fi/tilastot/henkiloliikennetutkimus/tuloksia-taulukoina#.W8imDmgzavs")
+
+# haetaan osoitteet
+urlit <- html_nodes(tulossivu, "a") %>% 
+   html_attr("href") %>% 
+   subset(str_detect(., "_tulo")) %>% 
+   paste0("https://www.liikennevirasto.fi", .) %>% 
+   enframe() %>% 
+   transmute(name = map_chr(str_split(value, "/"), str_subset, "\\.xlsx$") %>% 
+                str_replace(".xlsx", "") %>% 
+                tekstit() %>% 
+                isoksi(), 
+             value)
+   transmute(name = str_replace(value, "https://www.liikennevirasto.fi/documents/20473/439901/", "") %>% 
+                str_extract("[A-Ö, a-ö_]+") %>% 
+                tekstit() %>% 
+                isoksi(), value) 
+
+
+# ladataan tiedostot
+# dir.create("data/hlt/", recursive = TRUE) # tarvittaessa
+urlit %>% 
+   pwalk(~ download.file(..2, destfile = paste0("data/hlt/", ..1, ".xlsx"), method = "curl"))
+
+# tsekkasin myös sheetin ja kiinnostavat rivit
+data_raw <- urlit %>% 
+   select(name) %>% 
+   mutate(path = paste0("data/hlt/", name, ".xlsx") %>% enc2native()) %>% # ääkkösiä nimissä
+   mutate(data = map(path, readxl::read_excel, sheet = "D183", skip = 12, n_max = 9, col_names = FALSE))
+
+# tsekkasin sarakkeiden nimet etukäteen
+nimet <- c("tarkoitus", "kk", "pp", "jk", "ha1", "ha2", "muu", "kaikki")
+
+data_all <- data_raw %>% 
+   select(-path) %>% 
+   unnest() %>% 
+   select(-ncol(.)) %>% # viimeinen tyhjä sarake pois
+   set_names("name", nimet) %>% 
+   mutate(tarkoitus = isoksi(tarkoitus)) %>% 
+   mutate_at(vars(name, tarkoitus), as_factor)
+
+# muotoillaan data kuvaa varten
+data_kuva <- data_all %>% 
+   transmute(name, tarkoitus, kk, pp, jk, ha = ha1 + ha2, muu, kaikki) %>% # kuski ja kyytiläinen yhteen henkilöautoluokkaan
+   mutate(tarkoitus = fct_relevel(tarkoitus, "Työ", "Työasia", "Koulu, opiskelu", "Ostos", 
+                                  "Asiointi, muu henkilökohtainen", "Saattaminen, kyyditseminen", "Vapaa-aika")) %>% 
+   gather(kt, matkat, kk:muu) %>% 
+   mutate(kt = as_factor(kt)) %>% 
+   filter(!str_detect(tarkoitus, "Kaikki")) %>% 
+   group_by(name, tarkoitus) %>% 
+   mutate(p_tar = matkat / sum(matkat)) %>% # pyöräilyn osuus tarkoituksesta
+   group_by(name, kt) %>% 
+   mutate(p_kt = matkat / sum(matkat)) %>% # tarkoituksen osuus pyöräilystä
+   ungroup()
+
+data_kuva %>% 
+   ggplot(aes(tarkoitus %>% fct_rev(), p_tar, fill = kt %>% fct_rev())) +
+   facet_wrap(~ name, ncol = 2) +
+   geom_col() +
+   coord_flip() +
+   geom_hline(yintercept = c(0.25, 0.5, 0.75), lty = 3, color = "gray50") +
+   ggrepel::geom_text_repel(aes(label = format(round(p_tar * 100, 1), decimal.mark = ",")), 
+                            position = position_stack(vjust = 0.5), size = 3, 
+                            direction = "x", box.padding = 0, point.padding = 0, segment.colour = "transparent") +
+   scale_fill_brewer(palette = "Set2", name = NULL, labels = rev(c("Jalankulku", "Pyöräily", "Joukkoliikenne", "Henkilöauto", "Muu"))) +
+   scale_y_continuous(labels = function(x) paste(x * 100, "%")) +
+   guides(fill = guide_legend(reverse = TRUE)) +
+   theme_minimal() +
+   theme(legend.position = "top") +
+   labs(x = NULL, y = NULL) 
+
+ggsave("tarkoitus_kt_blogi.png", h = 11, w = 7)
+
+kt_lab <- c("Jalankulku", "Pyöräily", "Joukkoliikenne", "Henkilöauto", "Muu")
+kt_col <- RColorBrewer::brewer.pal(5, "Set2") %>% set_names(kt_lab)
+
+
 files <- list.files("data/hlt/", full.names = TRUE)
 
 data_files <- map(files, readxl::read_excel, sheet = "D183", skip = 12, n_max = 9, col_names = FALSE)
@@ -69,15 +161,13 @@ seutu_tar <- map(data_files, as_tibble) %>%
    map(select, 1:8) %>% 
    map(set_names, nimet) %>%
    set_names(tools::file_path_sans_ext(basename(files))) %>% 
-   map(mutate, tarkoitus = isoksi(tarkoitus)) %>% 
+   # map(mutate, tarkoitus = isoksi(tarkoitus)) %>% 
    map(transmute, tarkoitus, kk, pp, jk, ha = ha1 + ha2, muu, kaikki) %>% 
    enframe() %>% 
-   mutate(name = isoksi(name)) %>% 
+   mutate(name = tekstit(name)) %>% 
    unnest() %>% 
-   mutate(name = str_replace(name, "_tulokset", ""),
-          name = str_replace(name, "_", " "),
-          name = str_replace(name, "ät Hä", "ät-Hä")) %>% 
-   mutate_at(vars(name, tarkoitus), as_factor) %>% 
+   mutate_at(vars(tarkoitus, name), isoksi) %>% 
+   mutate_at(vars(tarkoitus, name), as_factor) %>% 
    mutate(tarkoitus = fct_relevel(tarkoitus, "Työ", "Työasia", "Koulu, opiskelu", "Ostos", 
                                   "Asiointi, muu henkilökohtainen", "Saattaminen, kyyditseminen", "Vapaa-aika")) %>% 
    gather(kt, osuus, kk:muu) %>% 
